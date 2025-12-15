@@ -46,7 +46,7 @@ def _resolve_keyword(*candidates: str | None) -> str:
 
 @lru_cache(maxsize=1)
 def _log_startup_once() -> bool:
-    logger.info("服务启动成功，默认地址：%s", settings.base_url)
+    logger.info("服务启动成功，默认地址：%s", settings.display_base_url())
     logger.info("默认集合：%s", settings.search_tables)
     return True
 

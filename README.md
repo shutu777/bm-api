@@ -12,13 +12,16 @@
 
 | 变量名 | 默认值 | 说明 |
 | --- | --- | --- |
-| `API_HOST` | `0.0.0.0` | Uvicorn 监听地址 |
+| `API_HOST` | `0.0.0.0` | Uvicorn 监听地址（不填默认 0.0.0.0） |
 | `API_PORT` | `10000` | 服务端口 |
-| `BASE_URL` | `http://192.168.5.5:10000/bt/api` | 仅用于日志提示 |
+| `BASE_URL` | `/bt/api` | 可填写完整 URL，或仅填路径（默认 `/bt/api`） |
 | `DB_URL` | `mongodb://crawler:crawler_secure_password@192.168.5.5:27017/sehuatang` | MongoDB 连接串 |
 | `DB_NAME` | `sehuatang` | 库名 |
 | `SEARCH_TABLES` | `4k_video,...,vegan_with_mosaic` | 以逗号分隔的集合列表 |
 | `PAGE_SIZE` | `20` | 单页返回条数 |
+| `PUBLIC_HOST` | `自动检测` | 当 `BASE_URL` 是路径时，用于日志拼接的对外 IP/域名 |
+
+> 如果 `BASE_URL` 传入路径（推荐），启动日志会根据 `PUBLIC_HOST`（或自动检测 IP）与 `API_PORT` 动态拼接完整地址。
 
 所有变量都可以通过 Docker `-e` 或 `.env` 文件覆盖。
 

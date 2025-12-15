@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
 from typing import List
 
 
@@ -25,6 +27,20 @@ def _int_from_env(name: str, default: int) -> int:
     return max(number, 1)
 
 
+def _detect_git_root_parts() -> tuple[str, ...] | None:
+    git_binary = shutil.which("git")
+    if not git_binary:
+        return None
+    root_path = Path(git_binary).resolve().parent.parent
+    return PurePosixPath(root_path.as_posix()).parts
+
+
+_GIT_ROOT_PARTS = _detect_git_root_parts()
+_GIT_ROOT_PARTS_LOWER = (
+    tuple(part.lower() for part in _GIT_ROOT_PARTS) if _GIT_ROOT_PARTS else None
+)
+
+
 def _normalize_base_path(value: str | None) -> str:
     if not value:
         return "/bt/api"
@@ -33,9 +49,24 @@ def _normalize_base_path(value: str | None) -> str:
         return "/bt/api"
     if value.startswith("http://") or value.startswith("https://"):
         return value.rstrip("/")
-    if not value.startswith("/"):
-        value = "/" + value
-    return value.rstrip("/") or "/"
+    normalized = value.replace("\\", "/")
+    if ":" in normalized and not normalized.startswith("//"):
+        parts = PurePosixPath(normalized).parts
+        if parts and parts[0].endswith(":"):
+            lower_parts = tuple(part.lower() for part in parts)
+            if (
+                _GIT_ROOT_PARTS_LOWER
+                and lower_parts[: len(_GIT_ROOT_PARTS_LOWER)] == _GIT_ROOT_PARTS_LOWER
+            ):
+                parts = parts[len(_GIT_ROOT_PARTS_LOWER) :]
+            else:
+                parts = parts[1:]
+            normalized = "/" + "/".join(parts)
+    if not normalized.startswith("/"):
+        normalized = "/" + normalized.lstrip("/")
+    while "//" in normalized:
+        normalized = normalized.replace("//", "/")
+    return normalized.rstrip("/") or "/"
 
 
 def _determine_public_host(api_host: str) -> str:

@@ -62,6 +62,7 @@ docker run --rm -p 10000:10000 \
 
 ```json
 {
+  "total": 1,
   "data": [
     {
       "id": 1001,
@@ -76,6 +77,7 @@ docker run --rm -p 10000:10000 \
       "download_url": "magnet:?..."
     }
   ]
+  ]
 }
 ```
 
@@ -85,5 +87,6 @@ docker run --rm -p 10000:10000 \
 - `chinese` 仅 `hd_chinese_subtitles` 集合返回 `true`
 - `size_mb`、`seeders` 固定为 `0`
 - `download_url` 取文档字段 `magnet`
+- `total` 表示本次匹配到的总条数（暂不分页，全部返回）
 
 所有日志默认为中文，方便排查。

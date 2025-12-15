@@ -65,11 +65,11 @@ def _document_to_payload(doc: Dict[str, Any], collection_name: str) -> Dict[str,
     return payload
 
 
-def search_in_tables(keyword: str, page: int) -> Dict[str, List[Dict[str, Any]]]:
+def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
     keyword = keyword.strip()
     if not keyword:
         logger.warning("收到空关键字请求，直接返回空列表")
-        return {"data": []}
+        return {"total": 0, "data": []}
 
     page = max(page, 1)
     query = _build_query(keyword)
@@ -95,5 +95,6 @@ def search_in_tables(keyword: str, page: int) -> Dict[str, List[Dict[str, Any]]]
         for doc in docs:
             aggregated.append(_document_to_payload(doc, collection_name))
 
-    logger.info("聚合后总记录=%s，全部返回", len(aggregated))
-    return {"data": aggregated}
+    total = len(aggregated)
+    logger.info("聚合后总记录=%s，全部返回", total)
+    return {"total": total, "data": aggregated}

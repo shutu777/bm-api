@@ -39,6 +39,10 @@ _GIT_ROOT_PARTS = _detect_git_root_parts()
 _GIT_ROOT_PARTS_LOWER = (
     tuple(part.lower() for part in _GIT_ROOT_PARTS) if _GIT_ROOT_PARTS else None
 )
+_FALLBACK_GIT_PREFIXES = (
+    ("program files", "git"),
+    ("program files (x86)", "git"),
+)
 
 
 def _normalize_base_path(value: str | None) -> str:
@@ -51,17 +55,25 @@ def _normalize_base_path(value: str | None) -> str:
         return value.rstrip("/")
     normalized = value.replace("\\", "/")
     if ":" in normalized and not normalized.startswith("//"):
-        parts = PurePosixPath(normalized).parts
+        parts = list(PurePosixPath(normalized).parts)
         if parts and parts[0].endswith(":"):
             lower_parts = tuple(part.lower() for part in parts)
-            if (
-                _GIT_ROOT_PARTS_LOWER
-                and lower_parts[: len(_GIT_ROOT_PARTS_LOWER)] == _GIT_ROOT_PARTS_LOWER
-            ):
-                parts = parts[len(_GIT_ROOT_PARTS_LOWER) :]
+            trimmed_parts = parts[1:]
+            trimmed_lower = lower_parts[1:]
+
+            if _GIT_ROOT_PARTS_LOWER:
+                root_without_drive = _GIT_ROOT_PARTS_LOWER[1:]
+                if trimmed_lower[: len(root_without_drive)] == root_without_drive:
+                    trimmed_parts = trimmed_parts[len(root_without_drive) :]
+                else:
+                    trimmed_parts = trimmed_parts
             else:
-                parts = parts[1:]
-            normalized = "/" + "/".join(parts)
+                for prefix in _FALLBACK_GIT_PREFIXES:
+                    if trimmed_lower[: len(prefix)] == prefix:
+                        trimmed_parts = trimmed_parts[len(prefix) :]
+                        break
+
+            normalized = "/" + "/".join(trimmed_parts)
     if not normalized.startswith("/"):
         normalized = "/" + normalized.lstrip("/")
     while "//" in normalized:

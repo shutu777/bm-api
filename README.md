@@ -1,6 +1,6 @@
 # BT 搜索 API
 
-使用 **FastAPI** + **MongoDB** 封装的 BT 搜索接口，同时支持 `GET`/`POST` 访问 `http://192.168.5.5:10000/bt/api`。项目所有行为都依赖环境变量配置，可直接打包成 Docker 镜像部署。
+使用 **FastAPI** + **MongoDB** 封装的 BT 搜索接口，同时支持 `GET`/`POST` 访问 `http://<host>:10005/bt/api`（示例）。项目所有行为都依赖环境变量配置，可直接打包成 Docker 镜像部署。
 
 ## 运行依赖
 
@@ -10,16 +10,16 @@
 
 ## 环境变量
 
-| 变量名 | 默认值 | 说明 |
-| --- | --- | --- |
-| `API_HOST` | `0.0.0.0` | Uvicorn 监听地址（不填默认 0.0.0.0） |
-| `API_PORT` | `10000` | 服务端口 |
-| `BASE_URL` | `/bt/api` | 可填写完整 URL，或仅填路径（默认 `/bt/api`） |
-| `DB_URL` | `mongodb://crawler:crawler_secure_password@192.168.5.5:27017/sehuatang` | MongoDB 连接串 |
-| `DB_NAME` | `sehuatang` | 库名 |
-| `SEARCH_TABLES` | `4k_video,...,vegan_with_mosaic` | 以逗号分隔的集合列表 |
-| `PAGE_SIZE` | `20` | 单页返回条数 |
-| `PUBLIC_HOST` | `自动检测` | 当 `BASE_URL` 是路径时，用于日志拼接的对外 IP/域名 |
+| 变量名          | 默认值                                                     | 说明                                               |
+| --------------- | ---------------------------------------------------------- | -------------------------------------------------- |
+| `API_HOST`      | `0.0.0.0`                                                  | Uvicorn 监听地址（不填默认 0.0.0.0）               |
+| `API_PORT`      | `10000`                                                    | 服务端口（示例中会覆盖为 10005）                   |
+| `BASE_URL`      | `/bt/api`                                                  | 可填写完整 URL，或仅填路径（默认 `/bt/api`）       |
+| `DB_URL`        | `mongodb://<user>:<password>@<mongo_host>:27017/<db_name>` | MongoDB 连接串模板                                 |
+| `DB_NAME`       | `sehuatang`                                                | 库名                                               |
+| `SEARCH_TABLES` | `4k_video,...,vegan_with_mosaic`                           | 以逗号分隔的集合列表                               |
+| `PAGE_SIZE`     | `20`                                                       | 单页返回条数                                       |
+| `PUBLIC_HOST`   | `自动检测`                                                 | 当 `BASE_URL` 是路径时，用于日志拼接的对外 IP/域名 |
 
 > 如果 `BASE_URL` 传入路径（推荐），启动日志会根据 `PUBLIC_HOST`（或自动检测 IP）与 `API_PORT` 动态拼接完整地址。
 
@@ -28,24 +28,41 @@
 ## 本地运行
 
 ```bash
+# Windows PowerShell
 python -m venv .venv
-.venv/Scripts/activate  # PowerShell
+.venv/Scripts/activate
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 10000
+$env:API_PORT = "10005"
+$env:BASE_URL = "/bt/api"
+uvicorn app.main:app --host 0.0.0.0 --port 10005
+
+# macOS / Linux
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+API_PORT=10005 BASE_URL="/bt/api" uvicorn app.main:app --host 0.0.0.0 --port 10005
 ```
 
-启动后访问 `http://localhost:10000/bt/api?keyword=jav&page=1` 即可。
+启动后访问 `http://localhost:10005/bt/api?keyword=jav&page=1` 即可。
 
 ## Docker
 
 ```bash
 docker build -t bt-api .
-docker run --rm -p 10000:10000 \
-  -e DB_URL="mongodb://crawler:***@192.168.5.5:27017/sehuatang" \
+docker run -d \
+  --restart always \
+  -p 10005:10005 \
+  -e API_PORT="10005" \
+  -e BASE_URL="/bt/api" \
+  -e DB_URL="mongodb://<user>:<password>@<mongo_host>:27017/<db_name>" \
+  -e DB_NAME="<db_name>" \
+  -e SEARCH_TABLES="4k_video,anime_originate,asia_codeless_originate,asia_mosaic_originate,domestic_original,hd_chinese_subtitles,three_levels_photo,vegan_with_mosaic" \
+  -e PAGE_SIZE="20" \
+  --name bt-api \
   bt-api
 ```
 
-如果需要修改集合或页大小，继续添加对应环境变量。
+需要修改集合或页大小时，继续通过 `-e` 添加对应环境变量；若部署在公网，可额外传入 `PUBLIC_HOST=<域名或 IP>` 让日志展示正确的访问地址。
 
 ## 接口约定
 

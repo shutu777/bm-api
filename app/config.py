@@ -45,6 +45,30 @@ _FALLBACK_GIT_PREFIXES = (
 )
 
 
+def _strip_git_prefix(parts: List[str]) -> List[str]:
+    if not parts:
+        return parts
+
+    cleaned = list(parts)
+    if cleaned and cleaned[0] == "/":
+        cleaned = cleaned[1:]
+
+    lower_parts = tuple(part.lower() for part in cleaned)
+    candidates = []
+
+    if _GIT_ROOT_PARTS_LOWER:
+        candidates.append(_GIT_ROOT_PARTS_LOWER)
+        if len(_GIT_ROOT_PARTS_LOWER) > 1:
+            candidates.append(_GIT_ROOT_PARTS_LOWER[1:])
+    candidates.extend(_FALLBACK_GIT_PREFIXES)
+
+    for prefix in candidates:
+        if prefix and lower_parts[: len(prefix)] == prefix:
+            return cleaned[len(prefix) :]
+
+    return cleaned
+
+
 def _normalize_base_path(value: str | None) -> str:
     if not value:
         return "/bt/api"
@@ -54,26 +78,14 @@ def _normalize_base_path(value: str | None) -> str:
     if value.startswith("http://") or value.startswith("https://"):
         return value.rstrip("/")
     normalized = value.replace("\\", "/")
-    if ":" in normalized and not normalized.startswith("//"):
-        parts = list(PurePosixPath(normalized).parts)
-        if parts and parts[0].endswith(":"):
-            lower_parts = tuple(part.lower() for part in parts)
-            trimmed_parts = parts[1:]
-            trimmed_lower = lower_parts[1:]
+    parts = list(PurePosixPath(normalized).parts)
 
-            if _GIT_ROOT_PARTS_LOWER:
-                root_without_drive = _GIT_ROOT_PARTS_LOWER[1:]
-                if trimmed_lower[: len(root_without_drive)] == root_without_drive:
-                    trimmed_parts = trimmed_parts[len(root_without_drive) :]
-                else:
-                    trimmed_parts = trimmed_parts
-            else:
-                for prefix in _FALLBACK_GIT_PREFIXES:
-                    if trimmed_lower[: len(prefix)] == prefix:
-                        trimmed_parts = trimmed_parts[len(prefix) :]
-                        break
+    if parts and parts[0].endswith(":"):
+        parts = parts[1:]
 
-            normalized = "/" + "/".join(trimmed_parts)
+    stripped_parts = _strip_git_prefix(parts)
+
+    normalized = "/" + "/".join(stripped_parts)
     if not normalized.startswith("/"):
         normalized = "/" + normalized.lstrip("/")
     while "//" in normalized:

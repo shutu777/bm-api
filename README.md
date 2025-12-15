@@ -48,8 +48,8 @@ docker run --rm -p 10000:10000 \
 
 ### 请求
 
-- `GET /bt/api?keyword=jav&page=1`
-- `POST /bt/api`
+- `GET /bt/api?keyword=jav&page=1`（也支持 `query` 参数：`/bt/api?query=jav`）
+- `POST /bt/api`（可发送 JSON body，或通过 query string 传入 `keyword/query`/`page`）
 
 ```json
 {
@@ -57,6 +57,8 @@ docker run --rm -p 10000:10000 \
   "page": 1
 }
 ```
+
+> 提示：POST 请求如果不方便携带 JSON，可改用 `keyword` / `query` / `page` 这三个 query 参数，服务会自动回落。
 
 ### 响应
 

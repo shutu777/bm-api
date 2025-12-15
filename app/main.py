@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,13 @@ class SearchRequest(BaseModel):
     page: int = Field(default=1, ge=1, description="页码（从1开始）")
 
 
+def _resolve_keyword(*candidates: str | None) -> str:
+    for candidate in candidates:
+        if candidate and candidate.strip():
+            return candidate.strip()
+    return ""
+
+
 @lru_cache(maxsize=1)
 def _log_startup_once() -> bool:
     logger.info("服务启动成功，默认地址：%s", settings.base_url)
@@ -51,11 +58,18 @@ async def _startup() -> None:
 
 @app.get("/bt/api")
 async def search_get(
-    keyword: str = Query(..., min_length=1, description="关键字"),
+    keyword: str | None = Query(None, min_length=1, description="关键字"),
+    query_keyword: str | None = Query(
+        None, alias="query", min_length=1, description="备用参数 query"
+    ),
     page: int = Query(1, ge=1, description="页码"),
 ):
+    final_keyword = _resolve_keyword(keyword, query_keyword)
+    if not final_keyword:
+        raise HTTPException(status_code=422, detail="keyword/query 参数不能为空")
+
     try:
-        response = search_in_tables(keyword, page)
+        response = search_in_tables(final_keyword, page)
         return response
     except Exception as exc:  # pragma: no cover - 依赖外部数据库
         logger.exception("GET 请求失败：%s", exc)
@@ -63,9 +77,31 @@ async def search_get(
 
 
 @app.post("/bt/api")
-async def search_post(request: SearchRequest):
+async def search_post(
+    request: SearchRequest | None = Body(
+        None, description="POST body，keyword/page 字段"
+    ),
+    keyword_query: str | None = Query(
+        None, alias="keyword", min_length=1, description="query 参数 keyword"
+    ),
+    query_keyword: str | None = Query(
+        None, alias="query", min_length=1, description="备用参数 query"
+    ),
+    page_query: int = Query(
+        1, alias="page", ge=1, description="当 body 缺失时使用的页码"
+    ),
+):
+    body_keyword = request.keyword if request else None
+    body_page = request.page if request else None
+
+    final_keyword = _resolve_keyword(body_keyword, keyword_query, query_keyword)
+    if not final_keyword:
+        raise HTTPException(status_code=422, detail="keyword/query 参数不能为空")
+
+    final_page = body_page if body_page is not None else page_query
+
     try:
-        response = search_in_tables(request.keyword, request.page)
+        response = search_in_tables(final_keyword, final_page)
         return response
     except Exception as exc:  # pragma: no cover - 依赖外部数据库
         logger.exception("POST 请求失败：%s", exc)

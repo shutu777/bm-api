@@ -119,12 +119,13 @@ def _parse_proxy_cards(markdown: str) -> List[dict]:
                 i += 1
             content = "\n".join(chunk)
             title_match = re.search(
-                r"\[([^\]]+)\]\(https://www\.avbase\.net/works/", content
+                r"\[([^\]]+)\]\(https?://www\.avbase\.net/works/(?!date)",
+                content,
             )
             actors = [
                 actor.strip()
                 for actor in re.findall(
-                    r"\)\s*([^\]\n]+)\]\(https://www\.avbase\.net/talents/", content
+                    r"\)\s*([^\]\n]+)\]\(https?://www\.avbase\.net/talents/", content
                 )
                 if actor.strip()
             ]
@@ -151,13 +152,10 @@ def _fetch_via_proxy(keyword: str) -> str:
     return response.text
 
 
-def search_avbase(keyword: str) -> List[dict]:
-    """
-    根据关键字抓取 AVBase，返回包含 code/title/actors 的字典列表。
-    """
+def _fetch_direct_html(keyword: str) -> str:
     keyword = (keyword or "").strip()
     if not keyword:
-        return []
+        return ""
 
     session = _create_session()
     # 未安装 Cloudscraper 时，先访问一次基础页面以获取必要 Cookie。
@@ -167,22 +165,14 @@ def search_avbase(keyword: str) -> List[dict]:
         except requests.RequestException as exc:
             logger.debug("初始化 AVBase 会话失败，但继续执行：%s", exc)
 
-    try:
-        response = session.get(
-            BASE_URL,
-            params={"q": keyword},
-            timeout=TIMEOUT,
-        )
-        response.raise_for_status()
-        logger.info("已完成 AVBase 抓取，关键字=%s", keyword)
-        return _parse_cards(response.text)
-    except requests.HTTPError as exc:
-        status = exc.response.status_code if exc.response is not None else None
-        if status == 403:
-            logger.warning("AVBase 403，尝试使用镜像抓取：%s", keyword)
-            markdown = _fetch_via_proxy(keyword)
-            return _parse_proxy_cards(markdown)
-        raise
+    response = session.get(
+        BASE_URL,
+        params={"q": keyword},
+        timeout=TIMEOUT,
+    )
+    response.raise_for_status()
+    logger.info("已完成 AVBase 抓取，关键字=%s", keyword)
+    return response.text
 
 
 def is_code_like(keyword: str) -> bool:
@@ -242,6 +232,36 @@ def collapse_actor_list(cards: List[dict], limit: int = MAX_RESULTS) -> List[str
         if len(collapsed) >= limit:
             break
     return collapsed
+
+
+def search_avbase(keyword: str) -> List[dict]:
+    """
+    根据关键字抓取 AVBase，优先使用镜像避免 Cloudflare 拦截。
+    """
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return []
+
+    try:
+        markdown = _fetch_via_proxy(keyword)
+        proxy_cards = _parse_proxy_cards(markdown)
+        if proxy_cards:
+            logger.info("通过镜像抓取到 %s 条 AVBase 结果：%s", len(proxy_cards), keyword)
+            return proxy_cards
+    except requests.RequestException as exc:
+        logger.warning("镜像抓取失败，回退为直连：%s", exc)
+
+    try:
+        html = _fetch_direct_html(keyword)
+        if not html:
+            return []
+        return _parse_cards(html)
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        if status == 403:
+            logger.warning("直连 AVBase 仍被 403 拦截，返回空结果：%s", keyword)
+            return []
+        raise
 
 
 __all__ = ["search_avbase", "is_code_like", "filter_actor_cards", "collapse_actor_list"]

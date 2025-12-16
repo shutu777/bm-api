@@ -59,11 +59,17 @@ def _has_required_outer_classes(classes: Optional[Iterable[str]]) -> bool:
     return {"grid", "gap-4"}.issubset(set(classes))
 
 
+def _normalize_actor_name(name: str) -> str:
+    cleaned = name.strip().lstrip("[(").rstrip("])").strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned
+
+
 def _extract_actor_names(card: Tag) -> List[str]:
     chips = card.select("div.bg-base-100 a.chip")
     actors: List[str] = []
     for chip in chips:
-        name = chip.get_text(strip=True)
+        name = _normalize_actor_name(chip.get_text(strip=True))
         if name:
             actors.append(name)
     return actors
@@ -122,13 +128,13 @@ def _parse_proxy_cards(markdown: str) -> List[dict]:
                 r"\[([^\]]+)\]\(https?://www\.avbase\.net/works/(?!date)",
                 content,
             )
-            actors = [
-                actor.strip()
-                for actor in re.findall(
-                    r"\)\s*([^\]\n]+)\]\(https?://www\.avbase\.net/talents/", content
-                )
-                if actor.strip()
-            ]
+            actors = []
+            for actor_raw in re.findall(
+                r"\)\s*([^\]\n]+)\]\(https?://www\.avbase\.net/talents/", content
+            ):
+                cleaned = _normalize_actor_name(actor_raw)
+                if cleaned:
+                    actors.append(cleaned)
             cards.append(
                 {
                     "code": code_candidate,

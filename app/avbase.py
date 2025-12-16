@@ -4,7 +4,9 @@ AVBase 爬虫工具：抓取 https://www.avbase.net/works 的搜索页面，只�
 from __future__ import annotations
 
 import logging
+import re
 from typing import Iterable, List, Optional, Set
+from urllib.parse import quote
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -97,6 +99,58 @@ def _parse_cards(html: str) -> List[dict]:
     return results
 
 
+CODE_PATTERN = re.compile(r"^[A-Z0-9]{2,}-[A-Z0-9]{2,}$")
+
+
+def _parse_proxy_cards(markdown: str) -> List[dict]:
+    lines = markdown.splitlines()
+    cards: List[dict] = []
+    i = 0
+    while i < len(lines):
+        code_candidate = lines[i].strip()
+        if CODE_PATTERN.match(code_candidate):
+            chunk: List[str] = []
+            i += 1
+            while i < len(lines):
+                next_line = lines[i]
+                if CODE_PATTERN.match(next_line.strip()):
+                    break
+                chunk.append(next_line)
+                i += 1
+            content = "\n".join(chunk)
+            title_match = re.search(
+                r"\[([^\]]+)\]\(https://www\.avbase\.net/works/", content
+            )
+            actors = [
+                actor.strip()
+                for actor in re.findall(
+                    r"\)\s*([^\]\n]+)\]\(https://www\.avbase\.net/talents/", content
+                )
+                if actor.strip()
+            ]
+            cards.append(
+                {
+                    "code": code_candidate,
+                    "title": title_match.group(1).strip() if title_match else "",
+                    "actors": actors,
+                }
+            )
+            if len(cards) >= MAX_RESULTS:
+                break
+        else:
+            i += 1
+    return cards
+
+
+def _fetch_via_proxy(keyword: str) -> str:
+    proxy_url = (
+        "https://r.jina.ai/http://www.avbase.net/works?q=" + quote(keyword, safe="")
+    )
+    response = requests.get(proxy_url, headers=HEADERS, timeout=TIMEOUT)
+    response.raise_for_status()
+    return response.text
+
+
 def search_avbase(keyword: str) -> List[dict]:
     """
     根据关键字抓取 AVBase，返回包含 code/title/actors 的字典列表。
@@ -113,14 +167,22 @@ def search_avbase(keyword: str) -> List[dict]:
         except requests.RequestException as exc:
             logger.debug("初始化 AVBase 会话失败，但继续执行：%s", exc)
 
-    response = session.get(
-        BASE_URL,
-        params={"q": keyword},
-        timeout=TIMEOUT,
-    )
-    response.raise_for_status()
-    logger.info("已完成 AVBase 抓取，关键字=%s", keyword)
-    return _parse_cards(response.text)
+    try:
+        response = session.get(
+            BASE_URL,
+            params={"q": keyword},
+            timeout=TIMEOUT,
+        )
+        response.raise_for_status()
+        logger.info("已完成 AVBase 抓取，关键字=%s", keyword)
+        return _parse_cards(response.text)
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        if status == 403:
+            logger.warning("AVBase 403，尝试使用镜像抓取：%s", keyword)
+            markdown = _fetch_via_proxy(keyword)
+            return _parse_proxy_cards(markdown)
+        raise
 
 
 def is_code_like(keyword: str) -> bool:

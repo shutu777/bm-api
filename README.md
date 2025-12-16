@@ -1,114 +1,50 @@
 # BT 搜索 API
 
-使用 **FastAPI** + **MongoDB** 封装的 BT 搜索接口，同时支持 `GET`/`POST` 访问 `http://<host>:10005/bt/api`（示例）。项目所有行为都依赖环境变量配置，可直接打包成 Docker 镜像部署。
+使用 **FastAPI** + **MongoDB** 封装的 BT 搜索接口，默认暴露 `/bt/api` 与 `/api/search` 两条 API：
 
-## 运行依赖
+- `/bt/api`：与 MongoDB 中的多张集合匹配番号或标题。
+- `/api/search`：在抓取 AVBase 演员信息的同时返回 BT 搜索结果。
 
-- Python 3.11+
-- MongoDB（已存在 4k_video 等集合）
-- 访问 MongoDB 的网络权限
+所有行为均通过环境变量配置，推荐直接使用提供的 Docker 镜像部署。
 
 ## 环境变量
 
-| 变量名          | 默认值                                                     | 说明                                               |
-| --------------- | ---------------------------------------------------------- | -------------------------------------------------- |
-| `API_HOST`      | `0.0.0.0`                                                  | Uvicorn 监听地址（不填默认 0.0.0.0）               |
-| `API_PORT`      | `10000`                                                    | 服务端口（示例中会覆盖为 10005）                   |
-| `BASE_URL`      | `/bt/api`                                                  | 可填写完整 URL，或仅填路径（默认 `/bt/api`）       |
-| `DB_URL`        | `mongodb://<user>:<password>@<mongo_host>:27017/<db_name>` | MongoDB 连接串模板                                 |
-| `DB_NAME`       | `sehuatang`                                                | 库名                                               |
-| `SEARCH_TABLES` | `4k_video,...,vegan_with_mosaic`                           | 以逗号分隔的集合列表                               |
-| `PAGE_SIZE`     | `20`                                                       | 单页返回条数                                       |
-| `PUBLIC_HOST`   | `自动检测`                                                 | 当 `BASE_URL` 是路径时，用于日志拼接的对外 IP/域名 |
+| 变量名         | 默认值                                                    | 说明                                                   |
+| -------------- | --------------------------------------------------------- | ------------------------------------------------------ |
+| `API_HOST`     | `0.0.0.0`                                                 | Uvicorn 监听地址。                                     |
+| `API_PORT`     | `10000`                                                   | 服务端口（示例命令会覆盖为 `10005`）。                 |
+| `BASE_URL`     | `/bt/api`                                                 | API 对外路径，若提供完整 URL 将直接用于日志展示。     |
+| `DB_URL`       | `mongodb://crawler:crawler_secure_password@192.168.5.5:27017/sehuatang` | MongoDB 连接串，需包含账号、密码与数据库。             |
+| `DB_NAME`      | `sehuatang`                                               | MongoDB 数据库名。                                     |
+| `SEARCH_TABLES`| `4k_video,...,vegan_with_mosaic`                          | 逗号分隔的集合列表。                                   |
+| `PAGE_SIZE`    | `20`                                                      | 单次查询的逻辑页大小（目前聚合后直接全部返回）。       |
+| `PUBLIC_HOST`  | 自动检测                                                  | 当 `BASE_URL` 仅为路径时，用于拼接日志里的访问地址。   |
 
-> 如果 `BASE_URL` 传入路径（推荐），启动日志会根据 `PUBLIC_HOST`（或自动检测 IP）与 `API_PORT` 动态拼接完整地址。
+> 如果 `BASE_URL` 只写路径（推荐），启动日志会根据 `PUBLIC_HOST`（或自动检测到的 IP）与 `API_PORT` 拼出完整示例地址。
 
-所有变量都可以通过 Docker `-e` 或 `.env` 文件覆盖。
+## 快速部署
 
-## 本地运行
-
-```bash
-# Windows PowerShell
-python -m venv .venv
-.venv/Scripts/activate
-pip install -r requirements.txt
-$env:API_PORT = "10005"
-$env:BASE_URL = "/bt/api"
-uvicorn app.main:app --host 0.0.0.0 --port 10005
-
-# macOS / Linux
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-API_PORT=10005 BASE_URL="/bt/api" uvicorn app.main:app --host 0.0.0.0 --port 10005
-```
-
-启动后访问 `http://localhost:10005/bt/api?keyword=jav&page=1` 即可。
-
-## Docker
+服务器只需要安装 Docker，然后直接运行下面的命令即可拉取并启动镜像（端口、数据库地址等均可按需修改）：
 
 ```bash
-docker build -t bt-api .
 docker run -d \
   --restart always \
   -p 10005:10005 \
   -e API_PORT="10005" \
   -e BASE_URL="/bt/api" \
-  -e DB_URL="mongodb://<user>:<password>@<mongo_host>:27017/<db_name>" \
-  -e DB_NAME="<db_name>" \
+  -e DB_URL="mongodb://crawler:crawler_secure_password@192.168.5.5:27017/sehuatang" \
+  -e DB_NAME="sehuatang" \
   -e SEARCH_TABLES="4k_video,anime_originate,asia_codeless_originate,asia_mosaic_originate,domestic_original,hd_chinese_subtitles,three_levels_photo,vegan_with_mosaic" \
   -e PAGE_SIZE="20" \
   --name bt-api \
-  bt-api
+  shutu736/bt-api
 ```
 
-需要修改集合或页大小时，继续通过 `-e` 添加对应环境变量；若部署在公网，可额外传入 `PUBLIC_HOST=<域名或 IP>` 让日志展示正确的访问地址。
+容器启动后即可访问 `http://<服务器IP>:10005/bt/api?keyword=SNIS&page=1` 或 `http://<服务器IP>:10005/api/search?keyword=白上` 获取数据。
 
-## 接口约定
+## 接口返回说明
 
-### 请求
+- `/bt/api`：返回 `{"total": 总数, "data": [...]}`，其中 `data` 为 BT 种子列表（包含 `title`、`download_url` 等字段）。
+- `/api/search`：返回 `{"code": 200, "actors": ["演员1", ...], "torrents": [...]}`。当 AVBase 或 MongoDB 查询失败时，`code` 会变为 `502/500`，并附带错误信息。
 
-- `GET /bt/api?keyword=jav&page=1`（也支持 `query` 参数：`/bt/api?query=jav`）
-- `POST /bt/api`（可发送 JSON body，或通过 query string 传入 `keyword/query`/`page`）
-
-```json
-{
-  "keyword": "jav",
-  "page": 1
-}
-```
-
-> 提示：POST 请求如果不方便携带 JSON，可改用 `keyword` / `query` / `page` 这三个 query 参数，服务会自动回落。
-
-### 响应
-
-```json
-{
-  "total": 1,
-  "data": [
-    {
-      "id": 1001,
-      "site": "BT",
-      "size_mb": 0.0,
-      "seeders": 0,
-      "title": "AAA-123 高清合集",
-      "chinese": true,
-      "uc": false,
-      "uhd": false,
-      "free": true,
-      "download_url": "magnet:?..."
-    }
-  ]
-  ]
-}
-```
-
-- `id` 直接取集合中的 `id`
-- `site` 永远返回 `BT`
-- `title` 固定为 `number + 空格 + title`
-- `chinese` 仅 `hd_chinese_subtitles` 集合返回 `true`
-- `size_mb`、`seeders` 固定为 `0`
-- `download_url` 取文档字段 `magnet`
-- `total` 表示本次匹配到的总条数（暂不分页，全部返回）
-
-所有日志默认为中文，方便排查。
+日志与注释均为中文，方便排查问题。如果需要自定义更多行为，可在运行容器时继续追加 `-e` 覆盖环境变量。***

@@ -7,8 +7,10 @@ from functools import lru_cache
 
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .avbase import collapse_actor_list, filter_actor_cards, is_code_like, search_avbase
 from .config import settings
 from .search import search_in_tables
 
@@ -54,6 +56,55 @@ def _log_startup_once() -> bool:
 @app.on_event("startup")
 async def _startup() -> None:
     _log_startup_once()
+
+
+@app.get("/api/search")
+async def combined_search(
+    keyword: str = Query(..., min_length=1, description="搜索的关键字"),
+    page: int = Query(1, ge=1, description="BT 搜索的页码"),
+):
+    normalized_keyword = keyword.strip()
+    if not normalized_keyword:
+        raise HTTPException(status_code=422, detail="keyword 参数不能为空")
+
+    keyword_is_code = is_code_like(normalized_keyword)
+    actor_names: list[str] = []
+    try:
+        actor_cards = search_avbase(normalized_keyword)
+        if not keyword_is_code:
+            actor_cards = filter_actor_cards(actor_cards, normalized_keyword)
+        actor_names = collapse_actor_list(actor_cards)
+    except Exception as exc:  # pragma: no cover - 依赖外部网站
+        logger.exception("AVBase 搜索失败：%s", exc)
+        return JSONResponse(
+            status_code=502,
+            content={
+                "code": 502,
+                "message": "AVBase 搜索失败，请稍后重试",
+                "actors": [],
+                "torrents": [],
+            },
+        )
+
+    try:
+        torrents_payload = search_in_tables(normalized_keyword, page)
+    except Exception as exc:  # pragma: no cover - 依赖外部数据库
+        logger.exception("BT 搜索失败：%s", exc)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": 500,
+                "message": "BT 搜索失败，请查看日志",
+                "actors": actor_names,
+                "torrents": [],
+            },
+        )
+
+    torrents = []
+    if isinstance(torrents_payload, dict):
+        torrents = torrents_payload.get("data", [])
+
+    return {"code": 200, "actors": actor_names, "torrents": torrents}
 
 
 @app.get("/bt/api")

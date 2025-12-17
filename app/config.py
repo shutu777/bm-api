@@ -142,6 +142,7 @@ class Settings:
         )
     )
     page_size: int = field(default=_int_from_env("PAGE_SIZE", 20))
+    search_batch_size: int = field(default=_int_from_env("SEARCH_TABLE_BATCH_SIZE", 4))
 
     def display_base_url(self) -> str:
         base = self.base_url

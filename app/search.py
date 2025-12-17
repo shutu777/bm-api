@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, Iterable, List
 
 from pymongo.collection import Collection
 
@@ -65,6 +66,32 @@ def _document_to_payload(doc: Dict[str, Any], collection_name: str) -> Dict[str,
     return payload
 
 
+def _chunked_collections(
+    collections: Iterable[str], chunk_size: int
+) -> Iterable[List[str]]:
+    chunk: List[str] = []
+    for name in collections:
+        chunk.append(name)
+        if len(chunk) == chunk_size:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
+
+
+def _query_collection(collection_name: str, query: Dict[str, Any]) -> List[Dict[str, Any]]:
+    collection: Collection = database[collection_name]
+    try:
+        cursor = collection.find(query)
+        docs = list(cursor)
+        logger.info("集合 %s 命中 %s 条记录", collection_name, len(docs))
+    except Exception as exc:  # pragma: no cover - 依赖真实数据库
+        logger.error("查询集合 %s 失败：%s", collection_name, exc)
+        return []
+
+    return [_document_to_payload(doc, collection_name) for doc in docs]
+
+
 def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
     keyword = keyword.strip()
     if not keyword:
@@ -81,19 +108,27 @@ def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
         settings.search_tables,
     )
 
-    aggregated: List[Dict[str, Any]] = []
-    for collection_name in settings.search_tables:
-        collection: Collection = database[collection_name]
-        try:
-            cursor = collection.find(query)
-            docs = list(cursor)
-            logger.info("集合 %s 命中 %s 条记录", collection_name, len(docs))
-        except Exception as exc:  # pragma: no cover - 依赖真实数据库
-            logger.error("查询集合 %s 失败：%s", collection_name, exc)
-            continue
+    if not settings.search_tables:
+        logger.warning("未配置可搜索集合，直接返回空结果")
+        return {"total": 0, "data": []}
 
-        for doc in docs:
-            aggregated.append(_document_to_payload(doc, collection_name))
+    aggregated: List[Dict[str, Any]] = []
+
+    batch_size = max(1, settings.search_batch_size)
+    batches = list(_chunked_collections(settings.search_tables, batch_size))
+
+    for batch_index, batch in enumerate(batches, start=1):
+        logger.info(
+            "分批查询 %s/%s，当前集合=%s", batch_index, len(batches), batch
+        )
+        with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+            futures = {
+                executor.submit(_query_collection, collection_name, query): collection_name
+                for collection_name in batch
+            }
+
+            for future in as_completed(futures):
+                aggregated.extend(future.result())
 
     total = len(aggregated)
     logger.info("聚合后总记录=%s，全部返回", total)

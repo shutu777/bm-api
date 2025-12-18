@@ -144,6 +144,7 @@ def _document_to_payload(doc: Dict[str, Any], collection_name: str) -> Dict[str,
     return {
         "id": _extract_numeric_id(doc),
         "site": "Sehuatang",
+        "table": collection_name,
         "size_mb": size_mb,
         "seeders": 999,
         "title": final_title,
@@ -187,17 +188,12 @@ def _chunked_collections(
 def _query_collection(
     collection_name: str,
     query: Dict[str, Any],
-    per_collection_limit: int,
 ) -> List[Dict[str, Any]]:
     collection: Collection = database[collection_name]
     seen_magnets: set[str] = set()
     seen_titles: set[str] = set()
     try:
-        cursor = (
-            collection.find(query)
-            .sort("_id", -1)
-            .limit(per_collection_limit)
-        )
+        cursor = collection.find(query).sort("_id", -1)
         docs = list(cursor)
         logger.info("Collection %s matched %s docs", collection_name, len(docs))
     except Exception as exc:  # pragma: no cover - relies on live MongoDB
@@ -222,16 +218,14 @@ def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
         logger.warning("Empty keyword received, returning empty list")
         return {"total": 0, "data": []}
 
-    page = max(page, 1)
     query = _build_query(keyword)
-    per_collection_limit = max(settings.page_size, 1)
 
     if not settings.search_tables:
         logger.warning("No collections configured, returning empty result")
         return {"total": 0, "data": []}
 
     logger.info(
-        "Starting BT search, keyword=%s, logical page=%s, collections=%s",
+        "Starting BT search (page ignored), keyword=%s, requested page=%s, collections=%s",
         keyword,
         page,
         settings.search_tables,
@@ -254,7 +248,6 @@ def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
                     _query_collection,
                     collection_name,
                     query,
-                    per_collection_limit,
                 ): collection_name
                 for collection_name in batch
             }

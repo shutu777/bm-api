@@ -1,11 +1,11 @@
-"""搜索逻辑实现。"""
+"""BT search logic and payload assembly."""
 
 from __future__ import annotations
 
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 from pymongo.collection import Collection
 
@@ -13,6 +13,13 @@ from .config import settings
 from .database import database
 
 logger = logging.getLogger("bt-search")
+
+SIZE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(GB|MB|KB|GIB|MIB|KIB)", re.IGNORECASE)
+INVALID_TEXT_VALUES = {"", "none", "null"}
+MAGNET_KEYS = ("magnet", "Magnet Links")
+TITLE_KEYS = ("title", "Title", "Movie Name")
+NUMBER_KEYS = ("number", "Number")
+SIZE_KEYS = ("size_mb", "size", "Movie Size")
 
 
 def _build_query(keyword: str) -> Dict[str, Any]:
@@ -26,44 +33,142 @@ def _build_query(keyword: str) -> Dict[str, Any]:
     }
 
 
-def _safe_int(value: Any) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
+def _clean_text(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.lower() in INVALID_TEXT_VALUES:
+        return ""
+    return text
+
+
+def _first_present(doc: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in doc and doc[key] not in (None, ""):
+            return doc[key]
+    return None
+
+
+def _compose_title(number: Any, title: Any, brand_label: str | None = None) -> str:
+    number_str = _clean_text(number)
+    title_str = _clean_text(title)
+    if title_str and brand_label and brand_label not in title_str:
+        title_str = f"{brand_label} {title_str}".strip()
+    if number_str:
+        if title_str:
+            if number_str in title_str:
+                return title_str
+            return f"{number_str} {title_str}".strip()
+        return number_str
+    return title_str or "No Title"
+
+
+def _extract_numeric_id(doc: Dict[str, Any]) -> int:
+    for key in ("tid", "id"):
+        if key in doc:
+            try:
+                return int(str(doc[key]))
+            except (TypeError, ValueError):
+                continue
+    fallback = doc.get("_id")
+    if fallback is None:
+        return 0
+    try:
+        fallback_str = str(fallback)
+        return int(fallback_str[-8:], 16)
+    except (ValueError, TypeError):
+        return 0
+
+
+def _extract_size_from_text(text: str) -> float:
+    if not text:
+        return 0.0
+    match = SIZE_PATTERN.search(text)
+    if not match:
+        return 0.0
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return 0.0
+    unit = match.group(2).upper()
+    if "G" in unit:
+        return value * 1024
+    if "M" in unit:
         return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str) and value.strip().isdigit():
-        return int(value.strip())
-    return 0
+    if "K" in unit:
+        return value / 1024
+    return 0.0
 
 
-def _compose_title(number: Any, title: Any) -> str:
-    parts = [str(part).strip() for part in (number, title) if part]
-    return " ".join(parts).strip()
+def _resolve_size_mb(doc: Dict[str, Any], fallback_text: str) -> float:
+    for key in SIZE_KEYS:
+        if key in doc and doc[key] not in (None, ""):
+            try:
+                return float(doc[key])
+            except (TypeError, ValueError):
+                continue
+    return _extract_size_from_text(fallback_text)
 
 
-def _is_chinese_collection(collection_name: str) -> bool:
-    return collection_name == "hd_chinese_subtitles"
+def _classify(collection_name: str, final_title: str) -> Tuple[bool, bool, bool]:
+    name = collection_name.lower()
+    is_chinese = "chinese" in name or "domestic" in name
+    is_uc = any(
+        keyword in name
+        for keyword in ("codeless", "domestic", "no_mosaic", "korean", "nomosaic")
+    )
+    is_uhd = "4k" in name
+
+    title_upper = final_title.upper()
+    if "中字" in final_title or re.search(r"[-_]C\b", title_upper):
+        is_chinese = True
+    if any(keyword in final_title for keyword in ("无码", "破解", "流出")):
+        is_uc = True
+    if "FC2" in title_upper:
+        is_uc = True
+    if "4K" in title_upper:
+        is_uhd = True
+
+    return is_chinese, is_uc, is_uhd
 
 
 def _document_to_payload(doc: Dict[str, Any], collection_name: str) -> Dict[str, Any]:
-    composed_title = _compose_title(doc.get("number"), doc.get("title"))
-    download_raw = doc.get("magnet") or doc.get("download_url") or ""
-    download_url = str(download_raw) if download_raw else ""
-    payload = {
-        "id": _safe_int(doc.get("id")),
-        "site": "BT",
-        "size_mb": 0.0,
-        "seeders": 0,
-        "title": composed_title,
-        "chinese": _is_chinese_collection(collection_name),
-        "uc": bool(doc.get("uc", False)),
-        "uhd": bool(doc.get("uhd", False) or doc.get("is_uhd", False)),
-        "free": bool(doc.get("free", True)),
-        "download_url": download_url,
+    raw_title = _first_present(doc, *TITLE_KEYS)
+    raw_number = _first_present(doc, *NUMBER_KEYS)
+    brand_label = "[色花堂]"
+    final_title = _compose_title(raw_number, raw_title, brand_label)
+    magnet = _clean_text(_first_present(doc, *MAGNET_KEYS))
+    size_mb = round(_resolve_size_mb(doc, final_title), 2)
+    is_chinese, is_uc, is_uhd = _classify(collection_name, final_title)
+
+    return {
+        "id": _extract_numeric_id(doc),
+        "site": "Sehuatang",
+        "size_mb": size_mb,
+        "seeders": 999,
+        "title": final_title,
+        "chinese": is_chinese,
+        "uc": is_uc,
+        "uhd": is_uhd,
+        "free": True,
+        "download_url": magnet,
     }
-    return payload
+
+
+def _should_skip_document(
+    doc: Dict[str, Any],
+    seen_magnets: set[str],
+    seen_titles: set[str],
+) -> Tuple[bool, str, str]:
+    magnet = _clean_text(_first_present(doc, *MAGNET_KEYS))
+    title = _clean_text(_first_present(doc, *TITLE_KEYS))
+    if not magnet:
+        return True, "", ""
+    if magnet in seen_magnets:
+        return True, "", ""
+    if title and title in seen_titles:
+        return True, "", ""
+    return False, magnet, title
 
 
 def _chunked_collections(
@@ -79,51 +184,78 @@ def _chunked_collections(
         yield chunk
 
 
-def _query_collection(collection_name: str, query: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _query_collection(
+    collection_name: str,
+    query: Dict[str, Any],
+    per_collection_limit: int,
+) -> List[Dict[str, Any]]:
     collection: Collection = database[collection_name]
+    seen_magnets: set[str] = set()
+    seen_titles: set[str] = set()
     try:
-        cursor = collection.find(query)
+        cursor = (
+            collection.find(query)
+            .sort("_id", -1)
+            .limit(per_collection_limit)
+        )
         docs = list(cursor)
-        logger.info("集合 %s 命中 %s 条记录", collection_name, len(docs))
-    except Exception as exc:  # pragma: no cover - 依赖真实数据库
-        logger.error("查询集合 %s 失败：%s", collection_name, exc)
+        logger.info("Collection %s matched %s docs", collection_name, len(docs))
+    except Exception as exc:  # pragma: no cover - relies on live MongoDB
+        logger.error("Collection %s query failed: %s", collection_name, exc)
         return []
 
-    return [_document_to_payload(doc, collection_name) for doc in docs]
+    payloads: List[Dict[str, Any]] = []
+    for doc in docs:
+        skip, magnet, title = _should_skip_document(doc, seen_magnets, seen_titles)
+        if skip:
+            continue
+        seen_magnets.add(magnet)
+        if title:
+            seen_titles.add(title)
+        payloads.append(_document_to_payload(doc, collection_name))
+    return payloads
 
 
 def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
     keyword = keyword.strip()
     if not keyword:
-        logger.warning("收到空关键字请求，直接返回空列表")
+        logger.warning("Empty keyword received, returning empty list")
         return {"total": 0, "data": []}
 
     page = max(page, 1)
     query = _build_query(keyword)
+    per_collection_limit = max(settings.page_size, 1)
+
+    if not settings.search_tables:
+        logger.warning("No collections configured, returning empty result")
+        return {"total": 0, "data": []}
 
     logger.info(
-        "开始查询，关键字=%s，页码(暂不分页)=%s，涉及集合=%s",
+        "Starting BT search, keyword=%s, logical page=%s, collections=%s",
         keyword,
         page,
         settings.search_tables,
     )
 
-    if not settings.search_tables:
-        logger.warning("未配置可搜索集合，直接返回空结果")
-        return {"total": 0, "data": []}
-
     aggregated: List[Dict[str, Any]] = []
-
     batch_size = max(1, settings.search_batch_size)
     batches = list(_chunked_collections(settings.search_tables, batch_size))
 
     for batch_index, batch in enumerate(batches, start=1):
         logger.info(
-            "分批查询 %s/%s，当前集合=%s", batch_index, len(batches), batch
+            "Query batch %s/%s: %s",
+            batch_index,
+            len(batches),
+            batch,
         )
         with ThreadPoolExecutor(max_workers=len(batch)) as executor:
             futures = {
-                executor.submit(_query_collection, collection_name, query): collection_name
+                executor.submit(
+                    _query_collection,
+                    collection_name,
+                    query,
+                    per_collection_limit,
+                ): collection_name
                 for collection_name in batch
             }
 
@@ -131,5 +263,5 @@ def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
                 aggregated.extend(future.result())
 
     total = len(aggregated)
-    logger.info("聚合后总记录=%s，全部返回", total)
+    logger.info("Aggregated %s records, returning all", total)
     return {"total": total, "data": aggregated}

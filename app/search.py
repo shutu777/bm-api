@@ -148,6 +148,7 @@ def _document_to_payload(doc: Dict[str, Any], collection_name: str) -> Dict[str,
         "size_mb": size_mb,
         "seeders": 999,
         "title": final_title,
+        "number": _clean_text(raw_number),  # Added for sorting
         "chinese": is_chinese,
         "uc": is_uc,
         "uhd": is_uhd,
@@ -158,7 +159,7 @@ def _document_to_payload(doc: Dict[str, Any], collection_name: str) -> Dict[str,
 
 def _should_skip_document(
     doc: Dict[str, Any],
-    seen_magnets: set[str],
+    seen_magnets: set[str],  # Local deduplication within collection
     seen_titles: set[str],
 ) -> Tuple[bool, str, str]:
     magnet = _clean_text(_first_present(doc, *MAGNET_KEYS))
@@ -167,6 +168,7 @@ def _should_skip_document(
         return True, "", ""
     if magnet in seen_magnets:
         return True, "", ""
+    # Note: Title deduplication within collection logic kept as is
     if title and title in seen_titles:
         return True, "", ""
     return False, magnet, title
@@ -195,9 +197,9 @@ def _query_collection(
     try:
         cursor = collection.find(query).sort("_id", -1)
         docs = list(cursor)
-        logger.info("Collection %s matched %s docs", collection_name, len(docs))
+        logger.info("📂 集合 %s 匹配到 %s 条文档", collection_name, len(docs))
     except Exception as exc:  # pragma: no cover - relies on live MongoDB
-        logger.error("Collection %s query failed: %s", collection_name, exc)
+        logger.error("❌ 集合 %s 查询失败：%s", collection_name, exc)
         return []
 
     payloads: List[Dict[str, Any]] = []
@@ -215,29 +217,29 @@ def _query_collection(
 def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
     keyword = keyword.strip()
     if not keyword:
-        logger.warning("Empty keyword received, returning empty list")
+        logger.warning("⚠️ 收到空关键字，返回空列表")
         return {"total": 0, "data": []}
 
     query = _build_query(keyword)
 
     if not settings.search_tables:
-        logger.warning("No collections configured, returning empty result")
+        logger.warning("⚠️ 未配置搜索集合，返回空结果")
         return {"total": 0, "data": []}
 
     logger.info(
-        "Starting BT search (page ignored), keyword=%s, requested page=%s, collections=%s",
+        "🔍 开始 BT 搜索（忽略分页），关键字=%s，请求页码=%s，集合列表=%s",
         keyword,
         page,
         settings.search_tables,
     )
 
-    aggregated: List[Dict[str, Any]] = []
+    raw_results: List[Dict[str, Any]] = []
     batch_size = max(1, settings.search_batch_size)
     batches = list(_chunked_collections(settings.search_tables, batch_size))
 
     for batch_index, batch in enumerate(batches, start=1):
         logger.info(
-            "Query batch %s/%s: %s",
+            "🚀 执行查询批次 %s/%s：%s",
             batch_index,
             len(batches),
             batch,
@@ -253,8 +255,23 @@ def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
             }
 
             for future in as_completed(futures):
-                aggregated.extend(future.result())
+                raw_results.extend(future.result())
 
-    total = len(aggregated)
-    logger.info("Aggregated %s records, returning all", total)
-    return {"total": total, "data": aggregated}
+    # Global deduplication
+    global_seen_magnets: set[str] = set()
+    unique_results: List[Dict[str, Any]] = []
+    
+    for item in raw_results:
+        magnet = item.get("download_url", "")
+        if magnet and magnet not in global_seen_magnets:
+            global_seen_magnets.add(magnet)
+            unique_results.append(item)
+            
+    # Global sorting: by 'number' ascending
+    # Items with empty number come last (or first? usually empty number is less interesting)
+    # Let's put empty number at the end.
+    unique_results.sort(key=lambda x: (x.get("number") == "", x.get("number", "").lower()))
+
+    total = len(unique_results)
+    logger.info("✅ 全局去重后汇总 %s 条记录，准备返回", total)
+    return {"total": total, "data": unique_results}

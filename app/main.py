@@ -14,10 +14,38 @@ from .avbase import collapse_actor_list, filter_actor_cards, is_code_like, searc
 from .config import settings
 from .search import search_in_tables
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-)
+class EmojiFormatter(logging.Formatter):
+    """自定义日志格式，添加 Emoji 和中文级别。"""
+
+    FORMAT = "%(asctime)s %(message)s"
+    
+    LEVEL_MAP = {
+        logging.DEBUG: "🐞 [调试]",
+        logging.INFO: "ℹ️  [信息]",
+        logging.WARNING: "⚠️  [警告]",
+        logging.ERROR: "❌  [错误]",
+        logging.CRITICAL: "🔥 [严重]",
+    }
+
+    def format(self, record):
+        # 临时修改 levelname 以包含 Emoji，或者直接修改 msg
+        # 为了不破坏原始 record，我们在 format 时动态拼接
+        prefix = self.LEVEL_MAP.get(record.levelno, record.levelname)
+        # 将原始 message 格式化（处理参数）
+        original_msg = super().format(record)
+        # 移除默认的 format 产生的时间前缀（因为 super().format 会再次应用 self.FORMAT）
+        # 这里最简单的方式是直接构造最终字符串，不依赖 super().format 的结构
+        
+        # 重新格式化时间
+        ct = self.converter(record.created)
+        t = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+        
+        return f"{t} | {prefix} | {record.name} | {record.getMessage()}"
+
+# 配置日志
+handler = logging.StreamHandler()
+handler.setFormatter(EmojiFormatter())
+logging.basicConfig(level=logging.INFO, handlers=[handler])
 logger = logging.getLogger("bt-api")
 
 app = FastAPI(
@@ -48,8 +76,8 @@ def _resolve_keyword(*candidates: str | None) -> str:
 
 @lru_cache(maxsize=1)
 def _log_startup_once() -> bool:
-    logger.info("服务启动成功，默认地址：%s", settings.display_base_url())
-    logger.info("默认集合：%s", settings.search_tables)
+    logger.info("🚀 服务启动成功，默认地址：%s", settings.display_base_url())
+    logger.info("📂 默认搜索集合：%s", settings.search_tables)
     return True
 
 
@@ -162,7 +190,7 @@ async def search_post(
 if __name__ == "__main__":  # pragma: no cover - 手动运行
     import uvicorn
 
-    logger.info("以独立进程模式启动 Uvicorn……")
+    logger.info("🔥 正在以独立进程模式启动 Uvicorn 服务器...")
     uvicorn.run(
         "app.main:app",
         host=settings.api_host,

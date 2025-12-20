@@ -89,7 +89,7 @@ def _parse_cards(html: str) -> List[dict]:
     soup = BeautifulSoup(html, "html.parser")
     grid_container = soup.find("div", class_=_has_required_outer_classes)  # type: ignore[arg-type]
     if grid_container is None:
-        logger.info("AVBase 页面未找到结果网格，视为无结果。")
+        logger.info("⚠️ AVBase 页面未找到结果网格，视为无结果")
         return []
 
     cards = grid_container.find_all("div", class_="relative", limit=MAX_RESULTS)
@@ -106,6 +106,7 @@ def _parse_cards(html: str) -> List[dict]:
 
 
 CODE_PATTERN = re.compile(r"^[A-Z0-9]{2,}-[A-Z0-9]{2,}$")
+_ALNUM_CODE_PATTERN = re.compile(r"^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]+$")
 
 
 def _parse_proxy_cards(markdown: str) -> List[dict]:
@@ -169,7 +170,7 @@ def _fetch_direct_html(keyword: str) -> str:
         try:
             session.get(BASE_URL, timeout=TIMEOUT)
         except requests.RequestException as exc:
-            logger.debug("初始化 AVBase 会话失败，但继续执行：%s", exc)
+            logger.debug("⚠️ 初始化 AVBase 会话失败，但继续执行：%s", exc)
 
     response = session.get(
         BASE_URL,
@@ -177,21 +178,20 @@ def _fetch_direct_html(keyword: str) -> str:
         timeout=TIMEOUT,
     )
     response.raise_for_status()
-    logger.info("已完成 AVBase 抓取，关键字=%s", keyword)
+    logger.info("✅ 已完成 AVBase 抓取，关键字=%s", keyword)
     return response.text
 
 
 def is_code_like(keyword: str) -> bool:
     """
-    判断关键字是否类似番号（仅包含字母/数字，可含横线和下划线，必须是 ASCII）。
+    判断关键字是否类似番号（必须包含字母与数字，可含横线和下划线，必须是 ASCII）。
     """
     if not keyword:
         return False
     stripped = "".join(ch for ch in keyword if not ch.isspace())
     if not stripped:
         return False
-    sanitized = stripped.replace("-", "").replace("_", "")
-    return sanitized.isascii() and sanitized.isalnum()
+    return bool(_ALNUM_CODE_PATTERN.match(stripped))
 
 
 def filter_actor_cards(cards: List[dict], keyword: str) -> List[dict]:
@@ -252,10 +252,10 @@ def search_avbase(keyword: str) -> List[dict]:
         markdown = _fetch_via_proxy(keyword)
         proxy_cards = _parse_proxy_cards(markdown)
         if proxy_cards:
-            logger.info("通过镜像抓取到 %s 条 AVBase 结果：%s", len(proxy_cards), keyword)
+            logger.info("🚀 通过镜像抓取到 %s 条 AVBase 结果：%s", len(proxy_cards), keyword)
             return proxy_cards
     except requests.RequestException as exc:
-        logger.warning("镜像抓取失败，回退为直连：%s", exc)
+        logger.warning("⚠️ 镜像抓取失败，回退为直连：%s", exc)
 
     try:
         html = _fetch_direct_html(keyword)
@@ -265,7 +265,7 @@ def search_avbase(keyword: str) -> List[dict]:
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else None
         if status == 403:
-            logger.warning("直连 AVBase 仍被 403 拦截，返回空结果：%s", keyword)
+            logger.warning("❌ 直连 AVBase 仍被 403 拦截，返回空结果：%s", keyword)
             return []
         raise
 

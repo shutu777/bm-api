@@ -54,6 +54,36 @@ def _build_query(keyword: str) -> Dict[str, Any]:
     }
 
 
+
+def _should_strict_number_search(keyword: str) -> bool:
+    stripped = "".join(ch for ch in keyword if not ch.isspace())
+    if not stripped:
+        return False
+    if not stripped.isascii():
+        return False
+    sanitized = stripped.replace("-", "").replace("_", "")
+    if not sanitized.isalnum():
+        return False
+    has_alpha = any(ch.isalpha() for ch in sanitized)
+    has_digit = any(ch.isdigit() for ch in sanitized)
+    if has_alpha and has_digit:
+        return True
+    if sanitized.isalpha() and 2 <= len(sanitized) <= 6:
+        return True
+    return False
+
+
+def _build_number_query(keyword: str) -> Dict[str, Any]:
+    stripped = "".join(ch for ch in keyword if not ch.isspace())
+    escaped = re.escape(stripped)
+    sanitized = stripped.replace("-", "").replace("_", "")
+    if sanitized.isalpha():
+        pattern = f"^{escaped}[-_]?\d"
+    else:
+        pattern = f"^{escaped}"
+    return {"number": {"$regex": pattern, "$options": "i"}}
+
+
 def _clean_text(value: Any) -> str:
     if value is None:
         return ""
@@ -245,20 +275,14 @@ def _query_collection(
     return payloads
 
 
-def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
-    keyword = keyword.strip()
-    if not keyword:
-        logger.warning("⚠️ 收到空关键字，返回空列表")
-        return {"total": 0, "data": []}
 
-    query = _build_query(keyword)
 
-    if not settings.search_tables:
-        logger.warning("⚠️ 未配置搜索集合，返回空结果")
-        return {"total": 0, "data": []}
 
+
+def _execute_search(keyword: str, page: int, query: Dict[str, Any], label: str) -> List[Dict[str, Any]]:
     logger.info(
-        "🔍 开始 BT 搜索（忽略分页），关键字=%s，请求页码=%s，集合列表=%s",
+        "BT search start (%s, no paging): keyword=%s, page=%s, tables=%s",
+        label,
         keyword,
         page,
         settings.search_tables,
@@ -270,7 +294,7 @@ def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
 
     for batch_index, batch in enumerate(batches, start=1):
         logger.info(
-            "🚀 执行查询批次 %s/%s：%s",
+            "Query batch %s/%s: %s",
             batch_index,
             len(batches),
             batch,
@@ -291,18 +315,48 @@ def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
     # Global deduplication
     global_seen_magnets: set[str] = set()
     unique_results: List[Dict[str, Any]] = []
-    
+
     for item in raw_results:
         magnet = item.get("download_url", "")
         if magnet and magnet not in global_seen_magnets:
             global_seen_magnets.add(magnet)
             unique_results.append(item)
-            
-    # Global sorting: by 'number' ascending
-    # Items with empty number come last (or first? usually empty number is less interesting)
-    # Let's put empty number at the end.
-    unique_results.sort(key=lambda x: (x.get("number") == "", x.get("number", "").lower()))
 
-    total = len(unique_results)
-    logger.info("✅ 全局去重后汇总 %s 条记录，准备返回", total)
-    return {"total": total, "data": unique_results}
+    # Global sorting: prioritize number matches, then sort by number
+    keyword_lower = keyword.lower()
+    unique_results.sort(
+        key=lambda x: (
+            keyword_lower not in x.get("number", "").lower(),  # Prioritize number matches
+            x.get("number") == "",
+            x.get("number", "").lower(),
+        )
+    )
+
+    return unique_results
+
+
+def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
+    keyword = keyword.strip()
+    if not keyword:
+        logger.warning("Empty keyword received, returning empty list")
+        return {"total": 0, "data": []}
+
+    if not settings.search_tables:
+        logger.warning("Search tables not configured, returning empty result")
+        return {"total": 0, "data": []}
+
+    if _should_strict_number_search(keyword):
+        strict_query = _build_number_query(keyword)
+        strict_results = _execute_search(keyword, page, strict_query, "number-prefix")
+        if strict_results:
+            total = len(strict_results)
+            logger.info("Total %s records after dedupe, returning (strict-number)", total)
+            return {"total": total, "data": strict_results}
+        logger.info("Strict-number empty, fallback to fuzzy: %s", keyword)
+
+    fuzzy_query = _build_query(keyword)
+    fuzzy_results = _execute_search(keyword, page, fuzzy_query, "fuzzy")
+    total = len(fuzzy_results)
+    logger.info("Total %s records after dedupe, returning", total)
+    return {"total": total, "data": fuzzy_results}
+

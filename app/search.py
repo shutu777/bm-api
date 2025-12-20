@@ -22,6 +22,27 @@ NUMBER_KEYS = ("number", "Number")
 SIZE_KEYS = ("size_mb", "size", "Movie Size")
 
 
+SEARCH_PROJECTION = {
+    # From TITLE_KEYS
+    "title": 1,
+    "Title": 1,
+    "Movie Name": 1,
+    # From NUMBER_KEYS
+    "number": 1,
+    "Number": 1,
+    # From MAGNET_KEYS
+    "magnet": 1,
+    "Magnet Links": 1,
+    # From SIZE_KEYS
+    "size_mb": 1,
+    "size": 1,
+    "Movie Size": 1,
+    # From _extract_numeric_id
+    "tid": 1,
+    "id": 1,
+}
+
+
 def _build_query(keyword: str) -> Dict[str, Any]:
     escaped = re.escape(keyword)
     pattern = f".*{escaped}.*"
@@ -100,6 +121,16 @@ def _extract_size_from_text(text: str) -> float:
     return 0.0
 
 
+def _clean_magnet(magnet_link: str) -> str:
+    """Cleans magnet link, extracting only the BTIH hash part."""
+    if not magnet_link:
+        return ""
+    match = re.search(r"urn:btih:([a-zA-Z0-9]{32,40})", magnet_link, re.IGNORECASE)
+    if match:
+        return f"magnet:?xt=urn:btih:{match.group(1)}"
+    return magnet_link
+
+
 def _resolve_size_mb(doc: Dict[str, Any], fallback_text: str) -> float:
     for key in SIZE_KEYS:
         if key in doc and doc[key] not in (None, ""):
@@ -137,7 +168,7 @@ def _document_to_payload(doc: Dict[str, Any], collection_name: str) -> Dict[str,
     raw_number = _first_present(doc, *NUMBER_KEYS)
     brand_label = "[色花堂]"
     final_title = _compose_title(raw_number, raw_title, brand_label)
-    magnet = _clean_text(_first_present(doc, *MAGNET_KEYS))
+    magnet = _clean_magnet(_clean_text(_first_present(doc, *MAGNET_KEYS)))
     size_mb = round(_resolve_size_mb(doc, final_title), 2)
     is_chinese, is_uc, is_uhd = _classify(collection_name, final_title)
 
@@ -162,7 +193,7 @@ def _should_skip_document(
     seen_magnets: set[str],  # Local deduplication within collection
     seen_titles: set[str],
 ) -> Tuple[bool, str, str]:
-    magnet = _clean_text(_first_present(doc, *MAGNET_KEYS))
+    magnet = _clean_magnet(_clean_text(_first_present(doc, *MAGNET_KEYS)))
     title = _clean_text(_first_present(doc, *TITLE_KEYS))
     if not magnet:
         return True, "", ""
@@ -195,7 +226,7 @@ def _query_collection(
     seen_magnets: set[str] = set()
     seen_titles: set[str] = set()
     try:
-        cursor = collection.find(query).sort("_id", -1)
+        cursor = collection.find(query, SEARCH_PROJECTION).sort("_id", -1)
         docs = list(cursor)
         logger.info("📂 集合 %s 匹配到 %s 条文档", collection_name, len(docs))
     except Exception as exc:  # pragma: no cover - relies on live MongoDB

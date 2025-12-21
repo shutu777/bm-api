@@ -45,7 +45,8 @@ SEARCH_PROJECTION = {
 
 def _build_query(keyword: str) -> Dict[str, Any]:
     parts = [re.escape(part) for part in keyword.split(" ") if part]
-    pattern = f".*{'\\s*'.join(parts)}.*"
+    joiner = r"\s*"
+    pattern = f".*{joiner.join(parts)}.*"
 
     query_conditions = []
     for key in TITLE_KEYS:

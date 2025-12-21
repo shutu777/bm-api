@@ -132,10 +132,10 @@ class Settings:
                         "anime_originate",
                         "asia_codeless_originate",
                         "asia_mosaic_originate",
-                        "domestic_original",
                         "hd_chinese_subtitles",
                         "three_levels_photo",
                         "vegan_with_mosaic",
+                        "magnent_links",
                     ]
                 ),
             )

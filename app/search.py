@@ -18,7 +18,7 @@ SIZE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(GB|MB|KB|GIB|MIB|KIB)", re.IGNORE
 INVALID_TEXT_VALUES = {"", "none", "null"}
 MAGNET_KEYS = ("magnet", "Magnet Links")
 TITLE_KEYS = ("title", "Title", "Movie Name")
-NUMBER_KEYS = ("number", "Number")
+NUMBER_KEYS = ("code", "number", "Number")
 SIZE_KEYS = ("size_mb", "size", "Movie Size")
 
 
@@ -44,14 +44,16 @@ SEARCH_PROJECTION = {
 
 
 def _build_query(keyword: str) -> Dict[str, Any]:
-    escaped = re.escape(keyword)
-    pattern = f".*{escaped}.*"
-    return {
-        "$or": [
-            {"title": {"$regex": pattern, "$options": "i"}},
-            {"number": {"$regex": pattern, "$options": "i"}},
-        ]
-    }
+    parts = [re.escape(part) for part in keyword.split(" ") if part]
+    pattern = f".*{'\\s*'.join(parts)}.*"
+
+    query_conditions = []
+    for key in TITLE_KEYS:
+        query_conditions.append({key: {"$regex": pattern, "$options": "i"}})
+    for key in NUMBER_KEYS:
+        query_conditions.append({key: {"$regex": pattern, "$options": "i"}})
+
+    return {"$or": query_conditions}
 
 
 
@@ -171,9 +173,25 @@ def _resolve_size_mb(doc: Dict[str, Any], fallback_text: str) -> float:
     return _extract_size_from_text(fallback_text)
 
 
+EXCLUSION_KEYWORDS = [
+    "国产",
+    "國產",
+    "主播",
+    "韩国",
+    "韓國",
+    "三级",
+    "三級",
+    "香港",
+    "台",
+    "中台",
+]
+
+
 def _classify(collection_name: str, final_title: str) -> Tuple[bool, bool, bool]:
     name = collection_name.lower()
-    is_chinese = "chinese" in name or "domestic" in name
+    # `is_chinese` now exclusively means "has Chinese subtitles"
+    is_chinese = False
+
     is_uc = any(
         keyword in name
         for keyword in ("codeless", "domestic", "no_mosaic", "korean", "nomosaic")
@@ -182,7 +200,8 @@ def _classify(collection_name: str, final_title: str) -> Tuple[bool, bool, bool]
 
     title_upper = final_title.upper()
     if "中字" in final_title or re.search(r"[-_]C\b", title_upper):
-        is_chinese = True
+        is_chinese = True  # Set subtitle flag
+
     if any(keyword in final_title for keyword in ("无码", "破解", "流出")):
         is_uc = True
     if "FC2" in title_upper:
@@ -209,8 +228,8 @@ def _document_to_payload(doc: Dict[str, Any], collection_name: str) -> Dict[str,
         "size_mb": size_mb,
         "seeders": 999,
         "title": final_title,
-        "number": _clean_text(raw_number),  # Added for sorting
-        "chinese": is_chinese,
+        "number": _clean_text(raw_number),
+        "chinese": is_chinese,  # This now means "has subtitles"
         "uc": is_uc,
         "uhd": is_uhd,
         "free": True,
@@ -268,10 +287,18 @@ def _query_collection(
         skip, magnet, title = _should_skip_document(doc, seen_magnets, seen_titles)
         if skip:
             continue
+
+        payload = _document_to_payload(doc, collection_name)
+
+        # New keyword-based exclusion filtering
+        payload_title = payload.get("title", "")
+        if any(keyword in payload_title for keyword in EXCLUSION_KEYWORDS):
+            continue
+
         seen_magnets.add(magnet)
         if title:
             seen_titles.add(title)
-        payloads.append(_document_to_payload(doc, collection_name))
+        payloads.append(payload)
     return payloads
 
 
@@ -315,7 +342,6 @@ def _execute_search(keyword: str, page: int, query: Dict[str, Any], label: str) 
     # Global deduplication
     global_seen_magnets: set[str] = set()
     unique_results: List[Dict[str, Any]] = []
-
     for item in raw_results:
         magnet = item.get("download_url", "")
         if magnet and magnet not in global_seen_magnets:
@@ -339,24 +365,34 @@ def search_in_tables(keyword: str, page: int) -> Dict[str, Any]:
     keyword = keyword.strip()
     if not keyword:
         logger.warning("Empty keyword received, returning empty list")
-        return {"total": 0, "data": []}
+        return {"count": 0, "torrents": []}
 
     if not settings.search_tables:
         logger.warning("Search tables not configured, returning empty result")
-        return {"total": 0, "data": []}
+        return {"count": 0, "torrents": []}
 
     if _should_strict_number_search(keyword):
         strict_query = _build_number_query(keyword)
-        strict_results = _execute_search(keyword, page, strict_query, "number-prefix")
+        strict_results = _execute_search(
+            keyword, page, strict_query, "number-prefix"
+        )
         if strict_results:
-            total = len(strict_results)
-            logger.info("Total %s records after dedupe, returning (strict-number)", total)
-            return {"total": total, "data": strict_results}
+            logger.info(
+                "Total %s torrents, returning (strict-number)",
+                len(strict_results),
+            )
+            return {"count": len(strict_results), "torrents": strict_results}
         logger.info("Strict-number empty, fallback to fuzzy: %s", keyword)
 
     fuzzy_query = _build_query(keyword)
-    fuzzy_results = _execute_search(keyword, page, fuzzy_query, "fuzzy")
-    total = len(fuzzy_results)
-    logger.info("Total %s records after dedupe, returning", total)
-    return {"total": total, "data": fuzzy_results}
+    fuzzy_results = _execute_search(
+        keyword, page, fuzzy_query, "fuzzy"
+    )
+    logger.info(
+        "Total %s torrents, returning",
+        len(fuzzy_results),
+    )
+    return {"count": len(fuzzy_results), "torrents": fuzzy_results}
+
+
 

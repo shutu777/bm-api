@@ -110,6 +110,7 @@ async def combined_search(
                 "code": 502,
                 "message": "AVBase 搜索失败，请稍后重试",
                 "actors": [],
+                "count": 0,
                 "torrents": [],
             },
         )
@@ -124,15 +125,23 @@ async def combined_search(
                 "code": 500,
                 "message": "BT 搜索失败，请查看日志",
                 "actors": actor_names,
+                "count": 0,
                 "torrents": [],
             },
         )
 
-    torrents = []
+    torrents_list = []
+    torrent_count = 0
     if isinstance(torrents_payload, dict):
-        torrents = torrents_payload.get("data", [])
+        torrents_list = torrents_payload.get("torrents", [])
+        torrent_count = torrents_payload.get("count", 0)
 
-    return {"code": 200, "actors": actor_names, "torrents": torrents}
+    return {
+        "code": 200,
+        "actors": actor_names,
+        "count": torrent_count,
+        "torrents": torrents_list,
+    }
 
 
 @app.get("/bt/api")

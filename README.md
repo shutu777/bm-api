@@ -9,17 +9,17 @@
 
 ## 环境变量
 
-| 变量名                    | 默认值                                                    | 说明                                                         |
-| ------------------------- | --------------------------------------------------------- | ------------------------------------------------------------ |
-| `API_HOST`                | `0.0.0.0`                                                 | Uvicorn 监听地址。                                           |
-| `API_PORT`                | `10000`                                                   | 服务端口（示例命令会覆盖为 `10005`）。                       |
-| `BASE_URL`                | `/bt/api`                                                 | API 对外路径，若提供完整 URL 将直接用于日志展示。            |
-| `DB_URL`                  | `mongodb://crawler:crawler_secure_password@192.168.5.5:27017/sehuatang` | MongoDB 连接串，需包含账号、密码与数据库。                    |
-| `DB_NAME`                 | `sehuatang`                                               | MongoDB 数据库名。                                           |
-| `SEARCH_TABLES`           | `4k_video,...,vegan_with_mosaic`                          | 逗号分隔的集合列表。                                         |
-| `SEARCH_TABLE_BATCH_SIZE` | `4`                                                      | 每批并行查询的集合数量，增大可减少分批次数，可用环境变量覆盖。 |
-| `PAGE_SIZE`               | `20`                                                      | 单次查询的逻辑页大小（目前聚合后直接全部返回）。             |
-| `PUBLIC_HOST`             | 自动检测                                                  | 当 `BASE_URL` 仅为路径时，用于拼接日志里的访问地址。          |
+| 变量名                    | 默认值                                                                  | 说明                                                           |
+| ------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `API_HOST`                | `0.0.0.0`                                                               | Uvicorn 监听地址。                                             |
+| `API_PORT`                | `10000`                                                                 | 服务端口（示例命令会覆盖为 `10005`）。                         |
+| `BASE_URL`                | `/bt/api`                                                               | API 对外路径，若提供完整 URL 将直接用于日志展示。              |
+| `DB_URL`                  | `mongodb://crawler:crawler_secure_password@192.168.5.5:27017/sehuatang` | MongoDB 连接串，需包含账号、密码与数据库。                     |
+| `DB_NAME`                 | `sehuatang`                                                             | MongoDB 数据库名。                                             |
+| `SEARCH_TABLES`           | `4k_video,...,vegan_with_mosaic`                                        | 逗号分隔的集合列表。                                           |
+| `SEARCH_TABLE_BATCH_SIZE` | `4`                                                                     | 每批并行查询的集合数量，增大可减少分批次数，可用环境变量覆盖。 |
+| `PAGE_SIZE`               | `20`                                                                    | 单次查询的逻辑页大小（目前聚合后直接全部返回）。               |
+| `PUBLIC_HOST`             | 自动检测                                                                | 当 `BASE_URL` 仅为路径时，用于拼接日志里的访问地址。           |
 
 > 如果 `BASE_URL` 只写路径（推荐），启动日志会根据 `PUBLIC_HOST`（或自动检测到的 IP）与 `API_PORT` 拼出完整示例地址。
 
@@ -36,7 +36,7 @@ docker run -d \
   -e DB_URL="mongodb://crawler:crawler_secure_password@192.168.5.5:27017/sehuatang" \
   -e DB_NAME="sehuatang" \
   -e SEARCH_TABLE_BATCH_SIZE="4" \
-  -e SEARCH_TABLES="4k_video,anime_originate,asia_codeless_originate,asia_mosaic_originate,domestic_original,hd_chinese_subtitles,three_levels_photo,vegan_with_mosaic" \
+  -e SEARCH_TABLES="4k_video,anime_originate,asia_codeless_originate,asia_mosaic_originate,hd_chinese_subtitles,three_levels_photo,vegan_with_mosaic,magnent_links" \
   -e PAGE_SIZE="20" \
   --name bt-api \
   shutu736/bt-api
@@ -49,4 +49,4 @@ docker run -d \
 - `/bt/api`：返回 `{"total": 总数, "data": [...]}`，其中 `data` 为 BT 种子列表（包含 `title`、`download_url` 等字段）。
 - `/api/search`：返回 `{"code": 200, "actors": ["演员1", ...], "torrents": [...]}`。当 AVBase 或 MongoDB 查询失败时，`code` 会变为 `502/500`，并附带错误信息。
 
-日志与注释均为中文，方便排查问题。如果需要自定义更多行为，可在运行容器时继续追加 `-e` 覆盖环境变量。***
+日志与注释均为中文，方便排查问题。如果需要自定义更多行为，可在运行容器时继续追加 `-e` 覆盖环境变量。\*\*\*
